@@ -3,6 +3,7 @@
 ## Notes: Simplifies moving many items from and to your (guild) bank.
 ## Notes-deDE: Einfaches Verschieben vieler Items in und aus eurer (Gilden)bank.
 ## Author: Sará.Festung der Stürme-EU
+## Category-enUS: Inventory
 
 ## Version: 7.0.0.0
 ## SavedVariables: gBankerDB

@@ -17,7 +17,33 @@ local BANKTYPE_PLAYER = Enum.PlayerInteractionType.Banker
 local BANKTYPE_GUILD = Enum.PlayerInteractionType.GuildBanker
 local BANKTYPE_WARBAND = Enum.PlayerInteractionType.AccountBanker
 
--- PLAYER_INTERACTION_MANAGER_FRAME_SHOW Enum.PlayerInteractionType
+local COMMAND_BLACKLIST = "blacklist"
+local COMMAND_BLACKLIST_SHORT = "b"
+local COMMAND_CASE = "case"
+local COMMAND_CASE_SHORT = "c"
+local COMMAND_DELAY = "delay"
+local COMMAND_DELAY_SHORT = "d"
+local COMMAND_GIVE = "give"
+local COMMAND_GIVE_SHORT = "g"
+local COMMAND_HELP = "help"
+local COMMAND_QUICK = "quick"
+local COMMAND_QUICK_SHORT = "q"
+local COMMAND_QUICKNUM = "quicknum"
+local COMMAND_TAKE = "take"
+local COMMAND_TAKE_SHORT = "t"
+local COMMAND_WAIT = "wait"
+local COMMAND_WAIT_SHORT = "w"
+
+local EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW = "PLAYER_INTERACTION_MANAGER_FRAME_SHOW"
+local EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE = "PLAYER_INTERACTION_MANAGER_FRAME_HIDE"
+local EVENT_ADDON_LOADED = "ADDON_LOADED"
+local EVENT_BAG_UPDATE_DELAYED = "BAG_UPDATE_DELAYED"
+local EVENT_UNIT_INVENTORY_CHANGED = "UNIT_INVENTORY_CHANGED"
+
+local MOVE_STATE_DONE = "DONE"
+local MOVE_STATE_MOVE = "MOVE"
+local MOVE_STATE_INV_UPDATE = "INV_UPDATE"
+local MOVE_STATE_BAG_UPDATE_DELAYED = "BAG_UPDATE_DELAYED"
 
 -- debug output
 local gbd = function(msg)
@@ -83,9 +109,12 @@ gbf:SetPoint("CENTER",0,0)
 gbf.title = gbf:CreateFontString(nil,"ARTWORK","GameFontNormal")
 gbf.title:SetPoint("TOPLEFT",gbf,"TOPLEFT",5,-7)
 gbf.title:SetText("|cff33dd00g|cffdd3300Banker|r v"..currentversion)
-gbf:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
-gbf:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
-gbf:RegisterEvent("ADDON_LOADED")
+gbf:RegisterEvent(EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW)
+gbf:RegisterEvent(EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE)
+gbf:RegisterEvent(EVENT_ADDON_LOADED)
+gbf:RegisterEvent(EVENT_UNIT_INVENTORY_CHANGED)
+gbf:RegisterEvent(EVENT_BAG_UPDATE_DELAYED)
+
 gbf:Hide()
 
 -- create another frame for quick links
@@ -124,33 +153,26 @@ local function toggleoption(_,option)
 end
 
 gb.banktype = BANKTYPE_NONE -- default is no bank is open
+gb.move_state = MOVE_STATE_DONE -- default is not moving an item to/from the gbank
 
 -- to bypass guild bank throttling, items are queued and their actual movement is throttled by this func
+-- trade phasing goes "Move item", "Wait for UNIT_INVENTORY_CHANGED" event, wait for "BAG_UPDATE" event, 
+-- then ready to move the next item, so we update the move state between "MOVE", "INV_UPDATE", "BAG_UPDATE", until "MOVE_DONE"
 gb.queue = {} -- bag/tab and slot numbers of items that shall be moved are stored here
-gb_queue = function(movementtype)
-	gb.elapsed = 0
-	gb.maytake = true
-	gbf:SetScript("OnUpdate",function(self,e)
-		if gb.maytake then
-			gb.elapsed = gb.elapsed + e
-			if gb.elapsed > gb.wait and gb.maytake then
-				gb.maytake = false
-				gb.elapsed = 0
-				if gb.queue[1] then -- as moved items' table entries are removed rather than set to nil, we simply need to check if the first entry exists
-					if movementtype == "take" then
-						AutoStoreGuildBankItem(gb.queue[1][1], gb.queue[1][2])
-					else -- give
-						C_Container.UseContainerItem(gb.queue[1][1], gb.queue[1][2])
-					end
-					tremove(gb.queue,1)
-					gb.maytake = true
-				else
-					gbf:SetScript("OnUpdate",nil)
-					gbp(gb.L.rdy)
-				end
-			end
+local function gb_queue(movementtype)
+	gb.queue_command = movementtype
+	if gb.queue[1] then -- as moved items' table entries are removed rather than set to nil, we simply need to check if the first entry exists
+		gb.move_state = MOVE_STATE_MOVE
+		if movementtype == COMMAND_TAKE then
+			AutoStoreGuildBankItem(gb.queue[1][1], gb.queue[1][2])
+		else -- give
+			C_Container.UseContainerItem(gb.queue[1][1], gb.queue[1][2])
 		end
-	end)
+		tremove(gb.queue,1)
+	else
+		gb.move_state = MOVE_STATE_DONE
+		gbp(gb.L.rdy)
+	end
 end
 
 -- This function parses the argument and returns 3 params: filter type, filter param, and filter subparam
@@ -314,7 +336,7 @@ local function gb_take(self,btn,arg)
 
 	end
 	gbp(gb.L.taking..movenum..gb.L.items)
-	gb_queue("take")
+	gb_queue(COMMAND_TAKE)
 end
 
 local function gb_give(self,btn,arg)
@@ -342,7 +364,7 @@ local function gb_give(self,btn,arg)
 		end
 	end
 	gbp(gb.L.giving..movenum..gb.L.items)
-	gb_queue("give")
+	gb_queue(COMMAND_GIVE)
 end
 
 local function gb_setquickbutton(src,index)
@@ -584,9 +606,9 @@ end
 
 -- event handling
 gbf:SetScript("OnEvent",function(s,e,a)
-	if e == "ADDON_LOADED" and a == "gBanker" then
-		gbf:UnregisterEvent("ADDON_LOADED")
-		gbd("ADDON_LOADED fired")
+	if e == EVENT_ADDON_LOADED and a == "gBanker" then
+		gbf:UnregisterEvent(EVENT_ADDON_LOADED)
+		gbd(e .. " fired")
 		-- set defaults
 		gBankerDB = gBankerDB or {
 			["version"] = currentversion,
@@ -661,27 +683,41 @@ gbf:SetScript("OnEvent",function(s,e,a)
 		else
 			gbf2:Hide()
 		end
-	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" and a == BANKTYPE_GUILD then
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_GUILD then
 		gb.banktype = BANKTYPE_GUILD
 		if gBankerDB.autoopeng then
 			scangbank()
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
-	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" and a == BANKTYPE_GUILD then
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_GUILD then
 		gb.banktype = BANKTYPE_NONE
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
-	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" and a == BANKTYPE_PLAYER then
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_PLAYER then
 		gb.banktype = BANKTYPE_PLAYER
 		if gBankerDB.autoopenb then
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
-	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" and a == BANKTYPE_PLAYER then
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_PLAYER then
 		gb.banktype = BANKTYPE_NONE
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
+	elseif e == EVENT_UNIT_INVENTORY_CHANGED then
+		if gb.move_state == MOVE_STATE_MOVE and a == "player" then
+			gb.move_state = MOVE_STATE_INV_UPDATE
+		end
+	elseif e == EVENT_BAG_UPDATE_DELAYED then
+		if gb.move_state == MOVE_STATE_INV_UPDATE then
+			gb.move_state = MOVE_STATE_BAG_UPDATE_DELAYED
+		end
+
+		if gb.move_state == MOVE_STATE_BAG_UPDATE_DELAYED then
+			C_Timer.After(0.5, function()
+				gb_queue(gb.queue_command)
+			end)
+		end
 	end
 end)
 
@@ -690,25 +726,25 @@ SLASH_GBANKER1, SLASH_GBANKER2 = '/gb', '/gbanker'
 function SlashCmdList.GBANKER(msg)
 	local a,n,b = msg:match("(%S*)%s*(%d*[,%.]?%d*)%s*(.*)")
 	a = lower(a)
-	if a == "take" or a == "t" then
+	if a == COMMAND_TAKE or a == COMMAND_TAKE_SHORT then
 		if not gBankerDB.cs then b = lower(b) end
 		gb_take(nil,nil,b)
-	elseif a == "give" or a == "g" then
+	elseif a == COMMAND_GIVE or a == COMMAND_GIVE_SHORT then
 		if not gBankerDB.cs then b = lower(b) end
 		gb_give(nil,nil,b)
-	elseif a == "b" or a == "blacklist" then
+	elseif a == COMMAND_BLACKLIST or a == COMMAND_BLACKLIST_SHORT then
 		b = lower(b)
 		b,c = b:match("(%S*)%s*(.*)")
 		gb_blist(nil,b,c)
-	elseif a == "quick" or a == "q" then
+	elseif a == COMMAND_QUICK or a == COMMAND_QUICK_SHORT then
 		if n then
 			n = tonumber(n)
 			gb_setquickbutton(b,n)
 		end
-	elseif a == "case" or a == "c" then
+	elseif a == COMMAND_CASE or a == COMMAND_CASE_SHORT then
         gBankerDB.cs = gBankerDB.cs == false and true
         gbp(gb.L.css .. ": " .. (gBankerDB.cs and gb.L.on or gb.L.off))
-	elseif a == "quicknum" then
+	elseif a == COMMAND_QUICKNUM then
 		if n then
 			n = tonumber(n)
 			if n > 0 then
@@ -720,12 +756,12 @@ function SlashCmdList.GBANKER(msg)
 	elseif a == "" then
 		if not buttonsexist then createbuttons() end
 		gbf:Show()
-	elseif a == "help" or a == gb.L.helpkey then
+	elseif a == COMMAND_HELP or a == gb.L.helpkey then
 		print(gb.L.help1..gBankerDB.version..gb.L.help2)
 		for i=1, #gb.L.help do
 			print(gb.L.help[i])
 		end
-	elseif a == "delay" or a == "wait" or a == "d" or a == "w" then
+	elseif a == COMMAND_DELAY or a == COMMAND_WAIT or a == COMMAND_DELAY_SHORT or a == COMMAND_WAIT_SHORT then
 		if n then
 			if n:find(",") then
 				n = n:gsub(",",".")
