@@ -1,0 +1,89 @@
+
+
+		gBanker (c) 2010-2014 by Sará.Festung der Stürme-EU [sarafdswow@gmail.com]
+
+
+r15 - v6.0.2.0 - 26 Oct 2014
+------------------
+- 6.0 toc bump
+
+
+r14 - v5.4.8.1 - 12 Jul 2014
+------------------
+- fixed an issue regarding initialization of default values
+
+
+r13 - v5.4.8.0 - 11 Jul 2014
+------------------
+- 5.4 toc bump
+- minor translation fixes and changes (thanks Sêrando@Aegwynn)
+- added "/gb delay" description to help
+- re-added "/gb (c)ase" slash command (when did that disappear?)
+
+
+r12 - 29 Nov 2011
+------------------
+- 4.3 toc bump
+- minor fixes and improvements
+
+
+r11 - 30 Oct 2011
+------------------
+- fixed some slashcommand error
+- fixed give/take on >4 items
+- delay between guild bank interactions can be set via "/gb delay #" (Default: 0.4)
+
+
+r10 - 28 Oct 2011
+------------------
+- fixed Hide chat feedback description
+- fixed error on first login
+
+
+r9 - 27 Oct 2011
+------------------
+- added QuickButtons with multiple keywords 
+- added option to turn off chat feedback
+
+
+r8 - 9 Sep 2011
+------------------
+- made localization possible
+- added german locale
+
+
+r7 - 4 Sep 2011
+------------------
+- number of QuickButtons is now configurable (/gb quicknum #)
+
+
+r6 - 21 Jul 2011
+------------------
+- added QuickButtons 
+
+
+b5 - 13 Oct 2010
+------------------
+- added options menu (and some options to fill it)
+
+
+b4 - 12 Sep 2010
+------------------
+- finally added a gui
+
+
+b3 - 7 Sep 2010
+------------------
+- added non-case sensitive search (default: on, change with "/gb c")
+- refined slash command handling
+
+
+b2 - 5 Sep 2010
+------------------
+- added support for character bank
+- removed debug spam *cough*
+
+
+b1 - 30 Aug 2010
+------------------
+- Initial release
