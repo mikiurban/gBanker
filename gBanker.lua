@@ -12,6 +12,13 @@ local currentversion = 15
 local name, gb = ...
 local lower, gsub = string.lower, string.gsub
 
+local BANKTYPE_NONE = Enum.PlayerInteractionType.None
+local BANKTYPE_PLAYER = Enum.PlayerInteractionType.Banker
+local BANKTYPE_GUILD = Enum.PlayerInteractionType.GuildBanker
+local BANKTYPE_WARBAND = Enum.PlayerInteractionType.AccountBanker
+
+-- PLAYER_INTERACTION_MANAGER_FRAME_SHOW Enum.PlayerInteractionType
+
 -- debug output
 local gbd = function(msg)
 	if msg and gb.debug then
@@ -47,7 +54,7 @@ end
 
 -- create frame for gui and event handling
 local buttonsexist = false -- buttons do not exist yet
-local gbf = CreateFrame("frame","gBankerMainFrame",UIParent)
+local gbf = CreateFrame("frame","gBankerMainFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate")
 gbf:SetFrameStrata("HIGH")
 gbf:SetWidth(200)
 gbf:SetHeight(65)
@@ -76,15 +83,13 @@ gbf:SetPoint("CENTER",0,0)
 gbf.title = gbf:CreateFontString(nil,"ARTWORK","GameFontNormal")
 gbf.title:SetPoint("TOPLEFT",gbf,"TOPLEFT",5,-7)
 gbf.title:SetText("|cff33dd00g|cffdd3300Banker|r v"..currentversion)
-gbf:RegisterEvent("GUILDBANKFRAME_OPENED")
-gbf:RegisterEvent("GUILDBANKFRAME_CLOSED")
-gbf:RegisterEvent("BANKFRAME_OPENED")
-gbf:RegisterEvent("BANKFRAME_CLOSED")
+gbf:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
+gbf:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
 gbf:RegisterEvent("ADDON_LOADED")
 gbf:Hide()
 
 -- create another frame for quick links
-local gbf2 = CreateFrame("frame","gBankerFrame2",gBankerMainFrame)
+local gbf2 = CreateFrame("frame","gBankerFrame2",gBankerMainFrame, BackdropTemplateMixin and "BackdropTemplate")
 gbf2:SetFrameStrata("HIGH")
 gbf2:SetWidth(200)
 gbf2:SetHeight(45)
@@ -118,8 +123,7 @@ local function toggleoption(_,option)
 	end
 end
 
--- give and take :)
-gb.banktype = false -- false means no bank is open
+gb.banktype = BANKTYPE_NONE -- default is no bank is open
 
 -- to bypass guild bank throttling, items are queued and their actual movement is throttled by this func
 gb.queue = {} -- bag/tab and slot numbers of items that shall be moved are stored here
@@ -136,7 +140,7 @@ gb_queue = function(movementtype)
 					if movementtype == "take" then
 						AutoStoreGuildBankItem(gb.queue[1][1], gb.queue[1][2])
 					else -- give
-						UseContainerItem(gb.queue[1][1], gb.queue[1][2])
+						C_Container.UseContainerItem(gb.queue[1][1], gb.queue[1][2])
 					end
 					tremove(gb.queue,1)
 					gb.maytake = true
@@ -149,141 +153,203 @@ gb_queue = function(movementtype)
 	end)
 end
 
+-- This function parses the argument and returns 3 params: filter type, filter param, and filter subparam
+-- If arg is the format "x:#:#" or "x:#" then it returns "x, #, #" otherwise it returns "name, arg"
+-- invalid (empty) arg return nil
+local function arg2xpac(arg)
+	if arg == nil then 
+		gbd("arg2xpac nil")
+		return nil, nil, nil
+	end
 
-local function gb_take(self,btn,arg,num)
+	if arg == "" then
+		gbd("arg2xpac empty string")
+		return nil, nil, nil
+	end
+
+	local regex1 = "(%a+):(%d+):(%d+)"
+	local regex2 = "(%a+):(%d+)"
+
+	if arg:find(regex1) then
+    local key, val, val2 = arg:match(regex1)
+		gbd("arg2xpac  " .. key .. "=" .. val .. ", subkey=" .. val2)
+		return key, val, val2
+	elseif arg:find(regex2) then
+    local key, val = arg:match(regex2)
+		gbd("arg2xpac  " .. key .. "=" .. val)
+		return key, val, nil
+	elseif arg == "all" then
+		gbd("arg2xpac all")
+		return "all", "all"
+	else
+		gbd("arg2xpac keyword " .. arg)
+		return "name", arg
+	end
+end
+
+-- This function returns true if the item in the bank/tab/slot matches the filtertype and value
+local function includeItem(bankType, bagSlot, containerSlot, filterType, filterValue, subValue)
+	-- gbd("bt="..tostring(bankType)..",bs="..tostring(bagSlot)..",cs="..tostring(containerSlot)..",ft="..filterType..",fv="..filterValue..",sv="..tostring(subValue))
+	if filterType == "all" then
+		return true
+	end
+
+	local link = ""
+	if bankType == BANKTYPE_PLAYER then
+		link = C_Container.GetContainerItemLink(bagSlot,containerSlot)
+	elseif bankType == BANKTYPE_GUILD then
+		link = GetGuildBankItemLink(bagSlot,containerSlot)
+	else
+		return false
+	end
+
+	if (link:match("Hbattlepet:")) and filterType == "name" then
+		local petName = l2t(link)
+		if not gBankerDB.cs then petName = lower(petName) end
+		return petName:match(filterValue)
+	elseif (link:match("Hitem:")) then
+		local classID, subClassID, expansionID, itemName = 0, 0, 0, ""
+		local item = Item:CreateFromItemLink(link)
+		item:ContinueOnItemLoad(function()
+			itemName, _, _, _, _, _, _, _, _, _, _, classID, subClassID, _, expansionID, _, _ = C_Item.GetItemInfo(link)
+			if expansionID == nil then
+				expansionID = 0
+			else
+				expansionID = math.floor(expansionID)
+			end
+		end)
+
+	-- skip it if it's on the blacklist
+		if not gBankerDB.cs then itemName = lower(itemName) end
+		if gBankerDB.blacklist[itemName] then
+			return false
+		end
+
+		if filterType == "name" then
+			return itemName:find(filterValue)
+		elseif filterType == "xpac" or filterType == "type" then
+			if filterType == "xpac" then
+				gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(expansionID))
+				return tonumber(filterValue) == tonumber(expansionID)
+			elseif filterType == "type" then
+				if subValue == nil then
+					gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID))
+					return tonumber(filterValue) == tonumber(classID)
+				else
+					gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID) .. ", s=" .. tostring(subClassID))
+					return tonumber(filterValue) == tonumber(classID) and tonumber(subValue) == tonumber(subClassID)
+				end
+			end
+		end
+
+		gbd("I have no idea what '" .. filterType .. "' means")
+	else
+		-- gbd need to handle other object types, see https://warcraft.wiki.gg/wiki/Hyperlinks
+	end
+	return false
+end
+
+local function gb_take(self,btn,arg)
 	gbd(tostring(btn))
 	-- do nothing if bank isn't open
 	if not gb.banktype then gbp(gb.L.nobank) return end
 	-- if gui was used, get the searchstring from editbox
 	if btn then arg = gbf.e1:GetText() end
 	if not gBankerDB.cs then arg = lower(arg) end
-	if arg == "" then arg = nil end
-	if num == "" then num = nil end
+	local filterType, filterValue, subValue = arg2xpac(arg)
+	if filterType == nil then return end
 	local movenum = 0 -- just a counter
-	--local tomove = num -- NYI
-	if gb.banktype == "g" then
+	if gb.banktype == BANKTYPE_GUILD then
 		local tab = GetCurrentGuildBankTab()
-		for i=1,98 do
-			if GetGuildBankItemInfo(tab,i) then
-				local name = l2t(GetGuildBankItemLink(tab,i))
-				local number = select(2,GetGuildBankItemInfo(tab,i))
-				if not gBankerDB.cs then name = lower(name) end
-				if not gBankerDB.blacklist[name] then
-					if arg then
-						if name:find(arg) then
-							--[[if tomove then
-								if tomove>=number then
-									tomove=tomove-number
-									movenum=movenum+1
-									AutoStoreGuildBankItem(tab,i)
-								elseif tomove<number then
-									SplitGuildBankItem(tab,i,tomove)
-									for k=0,NUM_BAG_SLOTS do
-										local slots = GetContainerNumFreeSlots(k)
-										if slots > 0 then
-											slots = GetContainerFreeSlots(k)
-											PickupContainerItem(k,slots[1])
-											tomove=tomove-number
-											break
-										elseif k==4 then
-											ClearCursor()
-											gbp(gb.L.bagsfull)
-											return
-										end
-									end
-								end
-							else]]
-								movenum=movenum+1
-								tinsert(gb.queue,{tab, i})
-							--end
-						end
-					else -- move all
-						movenum=movenum+1
-						tinsert(gb.queue,{tab, i})
-					end
+		for slot=1,98 do
+			if GetGuildBankItemInfo(tab,slot) then
+				if includeItem(BANKTYPE_GUILD, tab, slot, filterType, filterValue, subValue) then
+					movenum=movenum+1
+					tinsert(gb.queue,{tab, slot})
 				end
 			end
 		end
-	else
-		for i=-1,NUM_BAG_SLOTS+NUM_BANKBAGSLOTS+1 do
-			if i == -1 or i > NUM_BAG_SLOTS then
-				for j=1,GetContainerNumSlots(i) do
-					if GetContainerItemInfo(i,j) then
-						local name = l2t(GetContainerItemLink(i,j))						
-						if not gBankerDB.cs then name = lower(name) end
-						if not gBankerDB.blacklist[name] then
-							if arg then
-								if name:find(arg) then
-									movenum=movenum+1
-									UseContainerItem(i,j)
-								end
-							else
+	elseif gb.banktype == BANKTYPE_PLAYER then
+		if BankSlotsFrame:IsShown() then
+			for bag = BANK_CONTAINER, Enum.BagIndex.BankBag_7 do
+				if bag == BANK_CONTAINER or bag >= Enum.BagIndex.BankBag_1 then
+					for slot=1,C_Container.GetContainerNumSlots(bag) do
+						if C_Container.GetContainerItemInfo(bag,slot) then
+							local doTake = includeItem(BANKTYPE_PLAYER, bag, slot, filterType, filterValue, subValue)
+							if doTake then
+								gbd(" taking!")
 								movenum=movenum+1
-								UseContainerItem(i,j)
+								C_Container.UseContainerItem(bag,slot)
 							end
 						end
 					end
 				end
 			end
-		end	
+		elseif ReagentBankFrame:IsShown() then
+			for slot=1, C_Container.GetContainerNumSlots(Enum.BagIndex.Reagentbank) do
+				if C_Container.GetContainerItemInfo(Enum.BagIndex.Reagentbank, slot) then
+					local doTake = includeItem(BANKTYPE_PLAYER, Enum.BagIndex.Reagentbank, slot, filterType, filterValue, subValue)
+					if doTake then
+						gbd(" taking!")
+						movenum=movenum+1
+						C_Container.UseContainerItem(Enum.BagIndex.Reagentbank,slot)
+					end
+				end
+			end
+		else -- Warband
+			for tabOffset = 0, C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Account) do
+				local tabID = Enum.BagIndex.AccountBankTab_1 + tabOffset
+				for slot=1, C_Container.GetContainerNumSlots(tabID) do
+					if C_Container.GetContainerItemInfo(tabID, slot) then
+						local doTake = includeItem(BANKTYPE_PLAYER, tabID, slot, filterType, filterValue, subValue)
+						if doTake then
+							gbd(" taking!")
+							movenum=movenum+1
+							C_Container.UseContainerItem(tabID, slot)
+						end
+					end
+				end
+			end
+		end
+
 	end
-	gbp(gb.L.moving..movenum..gb.L.items)
+	gbp(gb.L.taking..movenum..gb.L.items)
 	gb_queue("take")
 end
-local function gb_give(self,btn,arg,num)
+
+local function gb_give(self,btn,arg)
 	gbd(tostring(btn))
 	-- do nothing if bank isn't open
 	if not gb.banktype then gbp(gb.L.nobank) return end
 	-- if gui was used, get the searchstring from editbox
 	if btn then arg = gbf.e1:GetText() end
 	if not gBankerDB.cs then arg = lower(arg) end
-	if arg == "" then arg = nil end
+	local filterType, filterValue, subValue = arg2xpac(arg)
+	if filterType == nil then return end
 	local movenum = 0
-	for i=1,NUM_BAG_SLOTS+1 do
-		if i == NUM_BAG_SLOTS+1 then i=0 end
-		for j=1,GetContainerNumSlots(i) do
-			if GetContainerItemInfo(i,j) then
-				local name = l2t(GetContainerItemLink(i,j))
-				if not gBankerDB.cs then name = lower(name) end
-				if not gBankerDB.blacklist[name] then
-					if arg then
-						if name:find(arg) then
-							movenum=movenum+1
-							if gb.banktype == "g" then
-								tinsert(gb.queue,{i, j})
-							else
-								UseContainerItem(i,j)
-							end
-						end
-					else
-						movenum=movenum+1
-						if gb.banktype == "g" then
-							tinsert(gb.queue,{i, j})
-						else
-							UseContainerItem(i,j)
-						end
+	for bag = BACKPACK_CONTAINER, Enum.BagIndex.ReagentBag do
+		for slot=1, C_Container.GetContainerNumSlots(bag) do
+			if C_Container.GetContainerItemInfo(bag,slot) then
+				if includeItem(BANKTYPE_PLAYER, bag, slot, filterType, filterValue, subValue) then
+					movenum=movenum+1
+					if gb.banktype == BANKTYPE_GUILD then
+						tinsert(gb.queue,{bag, slot})
+					elseif gb.banktype == BANKTYPE_PLAYER then
+						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, ReagentBankFrame:IsShown())
 					end
 				end
 			end
 		end
 	end
-	gbp(gb.L.moving..movenum..gb.L.items)
+	gbp(gb.L.giving..movenum..gb.L.items)
 	gb_queue("give")
 end
---[[gbdb = {
-	["quicklist"] = {
-		[index] = {
-			[1] = "src"
-		}
-	}
-}]]
+
 local function gb_setquickbutton(src,index)
 	if not src:find(";") then
 		gBankerDB.quicklist[index] = src
 		gbf2["b"..index]:SetText(gBankerDB.quicklist[index])
 	else
-		--gBankerDB.quicklist[index] = {[1] = src:gsub("(.-);.*","%1")}
-		--gbf2["b"..index]:SetText(gBankerDB.quicklist[index][1])
 		gBankerDB.quicklist[index] = {}
 		for key in src:gmatch(";?.-;") do
 			tinsert(gBankerDB.quicklist[index],(key:gsub(";","")))
@@ -354,7 +420,7 @@ end
 -- func for creating quickbuttons
 local qbposx = {35,100,[0]=165}
 local function createquickbutton(i)
-	gbf2["b"..i] = CreateFrame("Button","gBankerQuickButton"..i,gbf2,"OptionsButtonTemplate")
+	gbf2["b"..i] = CreateFrame("Button","gBankerQuickButton"..i,gbf2,"OptionsListButtonTemplate")
 	gbf2["b"..i]:SetHeight(18)
 	gbf2["b"..i]:SetWidth(60)
 	gbf2["b"..i]:SetPoint("CENTER",gbf2,"TOPLEFT",qbposx[i%3],7-(ceil(i/3)*20))
@@ -389,7 +455,7 @@ end
 local function createbuttons()
 	gbd("creating buttons...")
 	-- take
-	gbf.b1 = CreateFrame("Button",nil,gbf,"OptionsButtonTemplate")
+	gbf.b1 = CreateFrame("Button",nil,gbf,"OptionsListButtonTemplate")
 	gbf.b1:SetHeight(18)
 	gbf.b1:SetWidth(50)
 	gbf.b1:SetPoint("CENTER",gbf,"CENTER",-65,-20)
@@ -397,7 +463,7 @@ local function createbuttons()
 	gbf.b1:SetText(gb.L.t)
 	gbf.b1:SetScript("OnClick",gb_take)
 	-- give
-	gbf.b2 = CreateFrame("Button",nil,gbf,"OptionsButtonTemplate")
+	gbf.b2 = CreateFrame("Button",nil,gbf,"OptionsListButtonTemplate")
 	gbf.b2:SetHeight(18)
 	gbf.b2:SetWidth(50)
 	gbf.b2:SetPoint("CENTER",gbf,"CENTER",-0,-20)
@@ -405,7 +471,7 @@ local function createbuttons()
 	gbf.b2:SetText(gb.L.g)
 	gbf.b2:SetScript("OnClick",gb_give)
 	-- blacklist
-	gbf.b3 = CreateFrame("Button",nil,gbf,"OptionsButtonTemplate")
+	gbf.b3 = CreateFrame("Button",nil,gbf,"OptionsListButtonTemplate")
 	gbf.b3:SetHeight(18)
 	gbf.b3:SetWidth(50)
 	gbf.b3:SetPoint("CENTER",gbf,"CENTER",65,-20)
@@ -500,7 +566,7 @@ local function createbuttons()
 		ToggleDropDownMenu(1,nil,gbf.dropdown,gbf.b4,0,0)
 	end
 	-- options
-	gbf.b4 = CreateFrame("Button",nil,gbf,"OptionsButtonTemplate")
+	gbf.b4 = CreateFrame("Button",nil,gbf,"OptionsListButtonTemplate")
 	gbf.b4:SetHeight(18)
 	gbf.b4:SetWidth(50)
 	gbf.b4:SetPoint("CENTER",gbf,"CENTER",45,20)
@@ -595,25 +661,25 @@ gbf:SetScript("OnEvent",function(s,e,a)
 		else
 			gbf2:Hide()
 		end
-	elseif e == "GUILDBANKFRAME_OPENED" then
-		gb.banktype = "g"
+	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" and a == BANKTYPE_GUILD then
+		gb.banktype = BANKTYPE_GUILD
 		if gBankerDB.autoopeng then
 			scangbank()
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
-	elseif e == "GUILDBANKFRAME_CLOSED" then
-		gb.banktype = false
+	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" and a == BANKTYPE_GUILD then
+		gb.banktype = BANKTYPE_NONE
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
-	elseif e == "BANKFRAME_OPENED" then
-		gb.banktype = "b"
+	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" and a == BANKTYPE_PLAYER then
+		gb.banktype = BANKTYPE_PLAYER
 		if gBankerDB.autoopenb then
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
-	elseif e == "BANKFRAME_CLOSED" then
-		gb.banktype = false
+	elseif e == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" and a == BANKTYPE_PLAYER then
+		gb.banktype = BANKTYPE_NONE
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
 	end
@@ -626,10 +692,10 @@ function SlashCmdList.GBANKER(msg)
 	a = lower(a)
 	if a == "take" or a == "t" then
 		if not gBankerDB.cs then b = lower(b) end
-		gb_take(nil,nil,b,n)
+		gb_take(nil,nil,b)
 	elseif a == "give" or a == "g" then
 		if not gBankerDB.cs then b = lower(b) end
-		gb_give(nil,nil,b,n)
+		gb_give(nil,nil,b)
 	elseif a == "b" or a == "blacklist" then
 		b = lower(b)
 		b,c = b:match("(%S*)%s*(.*)")

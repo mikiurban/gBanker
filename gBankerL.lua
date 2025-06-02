@@ -57,6 +57,8 @@ else -- default english locale
 		["nobank"] =	"No bank open.",
 		["bagsfull"] =	"Bags are full.",
 		["moving"] =	"Moving ", -- number of items follows
+		["giving"] =	"Giving ", -- number of items follows
+		["taking"] =	"Taking ", -- number of items follows
 		["items"] =		" item(s).",
 		["added"] =		"Added ", -- itemname follows
 		["toblist"] =	" to your blacklist.",
@@ -89,13 +91,17 @@ else -- default english locale
 		["help"] = {
 			"/gb quicknum # -- sets number of QuickButtons to #",
 			"Arguments in [square brackets] are optional, letters in (b)rackets can be used instead of the whole word.",
-			"/gb (t)ake [keyword] -- move all items [which contain keyword] from bank to inventory",
-			"/gb (g)ive [keyword] -- move all items [which contain keyword] from inventory to bank",
+			"/gb (t)ake [matchPhrase] -- move items from bank to inventory",
+			"/gb (g)ive [matchPhrase] -- move items from inventory to bank",
 			"/gb (c)ase -- toggle case sensitive search",
 			"/gb (b)lacklist [(a)dd | (r)emove] [keyword] -- add or remove [keyword] from Blacklist, display current blacklist, if no keyword is given",
 			"/gb (q)uick # [keyword] -- set or remove keyword for QuickButton #",
 			"/gb (q)uick # [label;keyword1;keyword2;] -- Setup multiple keywords for QuickButton #. Don't forget the semi-colon at the end!",
 			"/gb delay # -- Set guild bank interaction delay (default: 0.4)",
+			"note: give and take [matchPhrase] can be 'all', partial name match (e.g. 'Potion'), a specific expansion ('xpac:1'), or item type ('type:7:2')",
+			"  expansion options: 0=WOW, 1=BC, 2=LK, 3=CAT, 4=PAN, 5=WOD, 6=LEG, 7=BFA, 8=SHA, 9=DF, 10=TWW",
+			"  type options: 0=Consumable, 1=Contanier, 2=Weapon, 4=Armor, 7=Trade Good, 8=Enchant, 9=Recipe, 17=Pet",
+			"  more type and subtype options, see https://warcraft.wiki.gg/wiki/ItemType"
 		},
 	}
 end
