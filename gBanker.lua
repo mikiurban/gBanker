@@ -45,6 +45,7 @@ local MOVE_STATE_MOVE = "MOVE"
 local MOVE_STATE_INV_UPDATE = "INV_UPDATE"
 local MOVE_STATE_BAG_UPDATE_DELAYED = "BAG_UPDATE_DELAYED"
 
+
 -- debug output
 local gbd = function(msg)
 	if msg and gb.debug then
@@ -160,15 +161,22 @@ gb.move_state = MOVE_STATE_DONE -- default is not moving an item to/from the gba
 -- then ready to move the next item, so we update the move state between "MOVE", "INV_UPDATE", "BAG_UPDATE", until "MOVE_DONE"
 gb.queue = {} -- bag/tab and slot numbers of items that shall be moved are stored here
 local function gb_queue(movementtype)
+	-- print("gbqueue "..movementtype..", move state: "..gb.move_state);
 	gb.queue_command = movementtype
 	if gb.queue[1] then -- as moved items' table entries are removed rather than set to nil, we simply need to check if the first entry exists
-		gb.move_state = MOVE_STATE_MOVE
-		if movementtype == COMMAND_TAKE then
-			AutoStoreGuildBankItem(gb.queue[1][1], gb.queue[1][2])
-		else -- give
-			C_Container.UseContainerItem(gb.queue[1][1], gb.queue[1][2])
+		if gb.move_state == MOVE_STATE_INV_UPDATE then
+			if movementtype == COMMAND_TAKE then
+				AutoStoreGuildBankItem(gb.queue[1][1], gb.queue[1][2])
+			else -- give
+				C_Container.UseContainerItem(gb.queue[1][1], gb.queue[1][2])
+			end
+			tremove(gb.queue,1)
+			gb.move_state = MOVE_STATE_MOVE
+		else
+			C_Timer.After(0.5, function()
+				gb_queue(gb.queue_command)
+			end)
 		end
-		tremove(gb.queue,1)
 	else
 		gb.move_state = MOVE_STATE_DONE
 		gbp(gb.L.rdy)
@@ -217,7 +225,7 @@ local function includeItem(bankType, bagSlot, containerSlot, filterType, filterV
 	end
 
 	local link = ""
-	if bankType == BANKTYPE_PLAYER then
+	if bankType == BANKTYPE_PLAYER or bankType == BANKTYPE_WARBAND then
 		link = C_Container.GetContainerItemLink(bagSlot,containerSlot)
 	elseif bankType == BANKTYPE_GUILD then
 		link = GetGuildBankItemLink(bagSlot,containerSlot)
@@ -292,50 +300,37 @@ local function gb_take(self,btn,arg)
 			end
 		end
 	elseif gb.banktype == BANKTYPE_PLAYER then
-		if BankSlotsFrame:IsShown() then
-			for bag = BANK_CONTAINER, Enum.BagIndex.BankBag_7 do
-				if bag == BANK_CONTAINER or bag >= Enum.BagIndex.BankBag_1 then
-					for slot=1,C_Container.GetContainerNumSlots(bag) do
-						if C_Container.GetContainerItemInfo(bag,slot) then
-							local doTake = includeItem(BANKTYPE_PLAYER, bag, slot, filterType, filterValue, subValue)
-							if doTake then
-								gbd(" taking!")
-								movenum=movenum+1
-								C_Container.UseContainerItem(bag,slot)
-							end
-						end
-					end
-				end
-			end
-		elseif ReagentBankFrame:IsShown() then
-			for slot=1, C_Container.GetContainerNumSlots(Enum.BagIndex.Reagentbank) do
-				if C_Container.GetContainerItemInfo(Enum.BagIndex.Reagentbank, slot) then
-					local doTake = includeItem(BANKTYPE_PLAYER, Enum.BagIndex.Reagentbank, slot, filterType, filterValue, subValue)
+		for tabOffset = 0, C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Character) do
+			local tabID = Enum.BagIndex.CharacterBankTab_1 + tabOffset
+			for slot=1, C_Container.GetContainerNumSlots(tabID) do
+				if C_Container.GetContainerItemInfo(tabID, slot) then
+					local doTake = includeItem(BANKTYPE_PLAYER, tabID, slot, filterType, filterValue, subValue)
 					if doTake then
 						gbd(" taking!")
 						movenum=movenum+1
-						C_Container.UseContainerItem(Enum.BagIndex.Reagentbank,slot)
-					end
-				end
-			end
-		else -- Warband
-			for tabOffset = 0, C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Account) do
-				local tabID = Enum.BagIndex.AccountBankTab_1 + tabOffset
-				for slot=1, C_Container.GetContainerNumSlots(tabID) do
-					if C_Container.GetContainerItemInfo(tabID, slot) then
-						local doTake = includeItem(BANKTYPE_PLAYER, tabID, slot, filterType, filterValue, subValue)
-						if doTake then
-							gbd(" taking!")
-							movenum=movenum+1
-							C_Container.UseContainerItem(tabID, slot)
-						end
+						C_Container.UseContainerItem(tabID, slot)
 					end
 				end
 			end
 		end
-
+	elseif gb.banktype == BANKTYPE_WARBAND then
+		for tabOffset = 0, C_Bank.FetchNumPurchasedBankTabs(Enum.BankType.Account) do
+			local tabID = Enum.BagIndex.AccountBankTab_1 + tabOffset
+			for slot=1, C_Container.GetContainerNumSlots(tabID) do
+				if C_Container.GetContainerItemInfo(tabID, slot) then
+					local doTake = includeItem(BANKTYPE_WARBAND, tabID, slot, filterType, filterValue, subValue)
+					if doTake then
+						gbd(" taking!")
+						movenum=movenum+1
+						C_Container.UseContainerItem(tabID, slot)
+					end
+				end
+			end
+		end
 	end
+
 	gbp(gb.L.taking..movenum..gb.L.items)
+	gb.move_state = MOVE_STATE_INV_UPDATE
 	gb_queue(COMMAND_TAKE)
 end
 
@@ -349,7 +344,7 @@ local function gb_give(self,btn,arg)
 	local filterType, filterValue, subValue = arg2xpac(arg)
 	if filterType == nil then return end
 	local movenum = 0
-	for bag = BACKPACK_CONTAINER, Enum.BagIndex.ReagentBag do
+	for bag = Enum.BagIndex.Backpack, Enum.BagIndex.ReagentBag do
 		for slot=1, C_Container.GetContainerNumSlots(bag) do
 			if C_Container.GetContainerItemInfo(bag,slot) then
 				if includeItem(BANKTYPE_PLAYER, bag, slot, filterType, filterValue, subValue) then
@@ -357,13 +352,16 @@ local function gb_give(self,btn,arg)
 					if gb.banktype == BANKTYPE_GUILD then
 						tinsert(gb.queue,{bag, slot})
 					elseif gb.banktype == BANKTYPE_PLAYER then
-						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, ReagentBankFrame:IsShown())
+						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, false)
+					elseif gb.banktype == BANKTYPE_WARBAND then
+						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, false)
 					end
 				end
 			end
 		end
 	end
 	gbp(gb.L.giving..movenum..gb.L.items)
+	gb.move_state = MOVE_STATE_INV_UPDATE
 	gb_queue(COMMAND_GIVE)
 end
 
@@ -704,16 +702,29 @@ gbf:SetScript("OnEvent",function(s,e,a)
 		gb.banktype = BANKTYPE_NONE
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_WARBAND then
+		gb.banktype = BANKTYPE_WARBAND
+		if gBankerDB.autoopenb then
+			if not buttonsexist then createbuttons() end
+			gbf:Show()
+		end
+	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_WARBAND then
+		gb.banktype = BANKTYPE_NONE
+		gbf:SetScript("OnUpdate",nil)
+		gbf:Hide()
 	elseif e == EVENT_UNIT_INVENTORY_CHANGED then
+		-- print("e:"..e..", a:"..tostring(a)..", move state: "..gb.move_state)
 		if gb.move_state == MOVE_STATE_MOVE and a == "player" then
 			gb.move_state = MOVE_STATE_INV_UPDATE
 		end
 	elseif e == EVENT_BAG_UPDATE_DELAYED then
-		if gb.move_state == MOVE_STATE_INV_UPDATE then
+		-- print("e:"..e..", a:"..tostring(a)..", move state: "..gb.move_state)
+		if gb.move_state == MOVE_STATE_INV_UPDATE or gb.move_state == MOVE_STATE_MOVE then
 			gb.move_state = MOVE_STATE_BAG_UPDATE_DELAYED
 		end
 
 		if gb.move_state == MOVE_STATE_BAG_UPDATE_DELAYED then
+			gb.move_state = MOVE_STATE_INV_UPDATE
 			C_Timer.After(0.5, function()
 				gb_queue(gb.queue_command)
 			end)

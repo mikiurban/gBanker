@@ -69,6 +69,7 @@ else -- default english locale
 		["qb0"] =		"Number of QuickButtons must be greater than 0, if you don't want to use them, disable them via the options menu.",
 		["unknown1"] =	"Unknown command - type ", -- slash command (see: helpkey) follows
 		["unknown2"] =	" for help.",
+		["unknownBanker"] =	"Unknown banker for: ",
 		["rdy"] = 		"Done!",
 		["delay"] =		"Guild bank interaction delay: ",
 		-- button texts
