@@ -1,4 +1,4 @@
-## Interface: 110105
+## Interface: 120001
 ## Title: gBanker
 ## Notes: Simplifies moving many items from and to your (guild) bank.
 ## Notes-deDE: Einfaches Verschieben vieler Items in und aus eurer (Gilden)bank.
