@@ -20,6 +20,7 @@ if loc == "deDE" then
 		["unknown2"] =	" ein, um Hilfe zu erhalten.",
 		["rdy"] =		"Fertig!",
 		["delay"] =		"Gildenbank-Interaktions-Verzögerung: ",
+		["debug"] =		"Debug status",
 		-- button texts
 		["t"] =			"Nehmen",
 		["g"] =			"Geben",
@@ -72,6 +73,7 @@ else -- default english locale
 		["unknownBanker"] =	"Unknown banker for: ",
 		["rdy"] = 		"Done!",
 		["delay"] =		"Guild bank interaction delay: ",
+		["debug"] =		"Debug status",
 		-- button texts
 		["t"] =			"Take",
 		["g"] =			"Give",

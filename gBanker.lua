@@ -17,6 +17,13 @@ local BANKTYPE_PLAYER = Enum.PlayerInteractionType.Banker
 local BANKTYPE_GUILD = Enum.PlayerInteractionType.GuildBanker
 local BANKTYPE_WARBAND = Enum.PlayerInteractionType.AccountBanker
 
+local function BankToStr(bank)
+	if (bank == BANKTYPE_NONE) then return "None" end
+	if (bank == BANKTYPE_PLAYER) then return "Player" end
+	if (bank == BANKTYPE_GUILD) then return "Guild" end
+	if (bank == BANKTYPE_WARBAND) then return "Warband" end
+end
+
 local COMMAND_BLACKLIST = "blacklist"
 local COMMAND_BLACKLIST_SHORT = "b"
 local COMMAND_CASE = "case"
@@ -33,6 +40,8 @@ local COMMAND_TAKE = "take"
 local COMMAND_TAKE_SHORT = "t"
 local COMMAND_WAIT = "wait"
 local COMMAND_WAIT_SHORT = "w"
+local COMMAND_DEBUG = "debug"
+local COMMAND_DEBUG_SHORT = "dbg"
 
 local EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW = "PLAYER_INTERACTION_MANAGER_FRAME_SHOW"
 local EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE = "PLAYER_INTERACTION_MANAGER_FRAME_HIDE"
@@ -49,7 +58,7 @@ local MOVE_STATE_BAG_UPDATE_DELAYED = "BAG_UPDATE_DELAYED"
 -- debug output
 local gbd = function(msg)
 	if msg and gb.debug then
-		print("|cff33dd00g|cffdd3300Banker debug: |r"..msg)
+		print("|cff33dd00g|cffdd3300Banker debug: |r"..tostring(msg))
 	end
 end
 
@@ -77,6 +86,12 @@ local function scangbank()
 	for i=1,GetNumGuildBankTabs() do
 		QueryGuildBankTab(i)
 	end
+end
+
+-- print bank change
+local function SelectBank(newBank)
+	gb.banktype = newBank
+	gbd("Selected bank: " .. BankToStr(newBank))
 end
 
 -- create frame for gui and event handling
@@ -259,14 +274,14 @@ local function includeItem(bankType, bagSlot, containerSlot, filterType, filterV
 			return itemName:find(filterValue)
 		elseif filterType == "xpac" or filterType == "type" then
 			if filterType == "xpac" then
-				gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(expansionID))
+				-- gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(expansionID))
 				return tonumber(filterValue) == tonumber(expansionID)
 			elseif filterType == "type" then
 				if subValue == nil then
-					gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID))
+					-- gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID))
 					return tonumber(filterValue) == tonumber(classID)
 				else
-					gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID) .. ", s=" .. tostring(subClassID))
+					-- gbd("n=" .. itemName .. ", f=" .. tostring(filterValue) .. ", x=" .. tostring(classID) .. ", s=" .. tostring(subClassID))
 					return tonumber(filterValue) == tonumber(classID) and tonumber(subValue) == tonumber(subClassID)
 				end
 			end
@@ -279,6 +294,23 @@ local function includeItem(bankType, bagSlot, containerSlot, filterType, filterV
 	return false
 end
 
+local function SwitchToAccountBankIfNecessary()
+	if gb.banktype == BANKTYPE_PLAYER and BankPanel and BankPanel:IsVisible() then
+		local tab = BankPanel:GetSelectedTabID()
+		if tab then
+			if tab == Enum.BagIndex.AccountBankTab_1 or
+			tab == Enum.BagIndex.AccountBankTab_2 or
+			tab == Enum.BagIndex.AccountBankTab_3 or
+			tab == Enum.BagIndex.AccountBankTab_4 or
+			tab == Enum.BagIndex.AccountBankTab_5 then
+				SelectBank(BANKTYPE_WARBAND)
+			end
+		end
+	else
+		gbd("No need to switch to warbank from " .. BankToStr(gb.banktype))
+	end
+end
+
 local function gb_take(self,btn,arg)
 	gbd(tostring(btn))
 	-- do nothing if bank isn't open
@@ -288,6 +320,10 @@ local function gb_take(self,btn,arg)
 	if not gBankerDB.cs then arg = lower(arg) end
 	local filterType, filterValue, subValue = arg2xpac(arg)
 	if filterType == nil then return end
+
+	-- make sure we are really on account bank vs character bank
+	SwitchToAccountBankIfNecessary()
+
 	local movenum = 0 -- just a counter
 	if gb.banktype == BANKTYPE_GUILD then
 		local tab = GetCurrentGuildBankTab()
@@ -343,6 +379,10 @@ local function gb_give(self,btn,arg)
 	if not gBankerDB.cs then arg = lower(arg) end
 	local filterType, filterValue, subValue = arg2xpac(arg)
 	if filterType == nil then return end
+
+	-- make sure we are really on account bank vs character bank
+	SwitchToAccountBankIfNecessary()
+
 	local movenum = 0
 	for bag = Enum.BagIndex.Backpack, Enum.BagIndex.ReagentBag do
 		for slot=1, C_Container.GetContainerNumSlots(bag) do
@@ -354,7 +394,7 @@ local function gb_give(self,btn,arg)
 					elseif gb.banktype == BANKTYPE_PLAYER then
 						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, false)
 					elseif gb.banktype == BANKTYPE_WARBAND then
-						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Character, false)
+						C_Container.UseContainerItem(bag,slot,"none", Enum.BankType.Account, false)
 					end
 				end
 			end
@@ -604,6 +644,7 @@ end
 
 -- event handling
 gbf:SetScript("OnEvent",function(s,e,a)
+	gbd("Event: "..tostring(e)..", arg = " .. tostring(a))
 	if e == EVENT_ADDON_LOADED and a == "gBanker" then
 		gbf:UnregisterEvent(EVENT_ADDON_LOADED)
 		gbd(e .. " fired")
@@ -682,34 +723,34 @@ gbf:SetScript("OnEvent",function(s,e,a)
 			gbf2:Hide()
 		end
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_GUILD then
-		gb.banktype = BANKTYPE_GUILD
+		SelectBank(BANKTYPE_GUILD)
 		if gBankerDB.autoopeng then
 			scangbank()
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_GUILD then
-		gb.banktype = BANKTYPE_NONE
+		SelectBank(BANKTYPE_NONE)
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_PLAYER then
-		gb.banktype = BANKTYPE_PLAYER
+		SelectBank(BANKTYPE_PLAYER)
 		if gBankerDB.autoopenb then
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_PLAYER then
-		gb.banktype = BANKTYPE_NONE
+		SelectBank(BANKTYPE_NONE)
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_SHOW and a == BANKTYPE_WARBAND then
-		gb.banktype = BANKTYPE_WARBAND
+		SelectBank(BANKTYPE_WARBAND)
 		if gBankerDB.autoopenb then
 			if not buttonsexist then createbuttons() end
 			gbf:Show()
 		end
 	elseif e == EVENT_PLAYER_INTERACTION_MANAGER_FRAME_HIDE and a == BANKTYPE_WARBAND then
-		gb.banktype = BANKTYPE_NONE
+		SelectBank(BANKTYPE_NONE)
 		gbf:SetScript("OnUpdate",nil)
 		gbf:Hide()
 	elseif e == EVENT_UNIT_INVENTORY_CHANGED then
@@ -784,6 +825,9 @@ function SlashCmdList.GBANKER(msg)
 			n = gBankerDB.wait
 		end
 		gbp(gb.L.delay..n.." "..SECONDS)
+	elseif a == COMMAND_DEBUG or a == COMMAND_DEBUG_SHORT then
+		gb.debug = not gb.debug
+		gbp(gb.L.debug .. ": " .. (gb.debug and gb.L.on or gb.L.off))
 	else
 		gbp(gb.L.unknown1.." |cffff7700/gb "..gb.L.helpkey.."|r"..gb.L.unknown2)
 	end
